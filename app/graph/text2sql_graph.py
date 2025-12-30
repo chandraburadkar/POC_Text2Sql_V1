@@ -1,9 +1,8 @@
-# app/graph/text2sql_graph.py
-from app.audit.langsmith_tracing import tracing_session, traceable_fn
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List
 
+from app.audit.langsmith_tracing import tracing_session, traceable_fn
 from app.state.agent_state import AgentState
 from app.rag.schema_index import build_schema_index
 from app.agents.query_rewriter import rewrite_query
@@ -17,8 +16,7 @@ def _safe_get_sql(candidate_sql: Any) -> str:
     """
     candidate_sql can be:
     - dict from generate_sql() -> {"sql": "...", ...}
-    - string (if someone changes generator later)
-    This helper makes the graph robust.
+    - string (fallback)
     """
     if isinstance(candidate_sql, dict):
         return candidate_sql.get("sql", "") or ""
@@ -26,48 +24,58 @@ def _safe_get_sql(candidate_sql: Any) -> str:
         return candidate_sql
     return ""
 
+
 @traceable_fn("run_text2sql")
 def run_text2sql(
     user_question: str,
     top_k_schema: int = 5,
     return_rows: int = 20,
-    enable_viz: bool = False,  # kept for later steps
+    enable_viz: bool = False,  # reserved for future
 ) -> Dict[str, Any]:
     """
     End-to-end Text2SQL pipeline.
-    Returns a stable, notebook-friendly response contract.
+    Safe for terminal + Jupyter.
     """
     with tracing_session():
 
+        # -----------------------------
+        # Init shared state
+        # -----------------------------
         state = AgentState(user_question=user_question)
 
+        # -----------------------------
         # STEP 5: Query Rewriter
+        # -----------------------------
         rew = rewrite_query(state.user_question)
         state.rewritten_query = rew.get("rewritten_query", state.user_question)
         state.intent = rew.get("intent", "UNKNOWN")
         state.entities = rew.get("entities", {}) or {}
 
-        # STEP 4: Schema RAG (retrieve schema context)
+        # -----------------------------
+        # STEP 4: Schema RAG
+        # -----------------------------
         vs = build_schema_index()
         docs = vs.similarity_search(state.rewritten_query, k=top_k_schema)
-        state.schema_context = "\n\n".join([d.page_content for d in docs])
 
-        # Best-effort: store retrieved table names if present in metadata/content
+        state.schema_context = "\n\n".join(d.page_content for d in docs)
+
         tables: List[str] = []
         for d in docs:
             t = None
             if getattr(d, "metadata", None):
                 t = d.metadata.get("table")
             if not t:
-                # fallback parse from page_content line "Table: xyz"
-                first_line = (d.page_content or "").splitlines()[0:1]
+                first_line = (d.page_content or "").splitlines()[:1]
                 if first_line and first_line[0].lower().startswith("table:"):
                     t = first_line[0].split(":", 1)[1].strip()
             if t:
                 tables.append(t)
+
         state.retrieved_tables = list(dict.fromkeys(tables))
 
-        # STEP 6: SQL Generator (returns dict)
+        # -----------------------------
+        # STEP 6: SQL Generator
+        # -----------------------------
         cand = generate_sql(
             rewritten_query=state.rewritten_query,
             schema_context=state.schema_context,
@@ -91,7 +99,9 @@ def run_text2sql(
                 "debug": {"rewriter": rew},
             }
 
-        # STEP 7: SQL Validator + Auto-fix (expects schema_context + candidate_sql string)
+        # -----------------------------
+        # STEP 7: SQL Validator + Auto-fix
+        # -----------------------------
         val = validate_and_autofix_sql(
             rewritten_query=state.rewritten_query,
             schema_context=state.schema_context,
@@ -118,41 +128,50 @@ def run_text2sql(
                 "debug": {"rewriter": rew, "validator": val},
             }
 
-        # STEP 8: SQL Execution (your executor returns dict with df inside)
+        # -----------------------------
+        # STEP 8: SQL Execution
+        # -----------------------------
         exec_out = execute_sql(state.final_sql, limit_preview=return_rows)
-        # state.dataframe = exec_out
+        state.dataframe = exec_out
+        state.result_df = exec_out.get("df")
 
-        # STEP 8: Explanation (call explainer with signature it supports)
-        # Your explainer currently doesn't accept intent/entities (you got that error),
-        # so we only pass the common args.
+        # -----------------------------
+        # STEP 9: Explanation
+        # -----------------------------
         explanation = explain_answer(
             user_question=state.user_question,
             sql=state.final_sql,
-            df=exec_out.get("df"),
+            df=state.result_df,
         )
         state.explanation = explanation
 
-        # STEP 10: Stable response contract (aliases added)
+        # -----------------------------
+        # STEP 10: Final Response
+        # -----------------------------
         return {
             "ok": True,
             "intent": state.intent,
             "entities": state.entities,
             "rewritten_query": state.rewritten_query,
             "retrieved_tables": state.retrieved_tables,
-            "candidate_sql": cand,                 # dict from generator
-            "final_sql": state.final_sql,          # string
+            "candidate_sql": state.candidate_sql,
+            "final_sql": state.final_sql,
             "fixed_by_llm": state.fixed_by_llm,
 
-            # executor output
-            "dataframe": exec_out,                 # dict (df, preview_markdown, row_count, columns)
+            # Execution outputs
+            "dataframe": state.dataframe,
+            "result_df": state.result_df,
+            "preview_markdown": (state.dataframe or {}).get("preview_markdown"),
 
-            # notebook-friendly aliases
-            "result_df": exec_out.get("df"),       # <-- THIS fixes your KeyError
-            "preview_markdown": exec_out.get("preview_markdown", ""),
-            "row_count": exec_out.get("row_count", 0),
-            "columns": exec_out.get("columns", []),
+            # Explanation
+            "explanation": state.explanation,
 
-            "explanation": explanation,
-            "chart_path": None,  # reserved for Step 11
-            "debug": {"rewriter": rew, "validator": val},
+            # Visualization placeholder
+            "chart_path": None,
+
+            # Debug
+            "debug": {
+                "rewriter": rew,
+                "validator": val,
+            },
         }

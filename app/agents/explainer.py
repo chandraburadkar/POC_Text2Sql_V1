@@ -1,7 +1,8 @@
 # app/agents/explainer.py
-from app.audit.langsmith_tracing import traceable_fn
+
 from __future__ import annotations
 
+from app.audit.langsmith_tracing import traceable_fn
 from typing import Any, Dict, Optional
 import pandas as pd
 

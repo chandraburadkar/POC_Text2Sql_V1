@@ -1,4 +1,5 @@
 # app/agents/query_rewriter.py
+from app.audit.langsmith_tracing import traceable_fn
 
 import logging
 from datetime import datetime
@@ -69,6 +70,7 @@ Respond STRICTLY in JSON using the provided schema.
 # -----------------------------
 # Public Function
 # -----------------------------
+@traceable_fn("query_rewriter")
 def rewrite_query(user_query: str) -> Dict[str, Any]:
     """
     Runs the Query Rewriter Agent.

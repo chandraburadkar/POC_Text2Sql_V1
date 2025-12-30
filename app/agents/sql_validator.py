@@ -1,7 +1,8 @@
 # app/agents/sql_validator.py
-from app.audit.langsmith_tracing import traceable_fn
+
 from __future__ import annotations
 
+from app.audit.langsmith_tracing import traceable_fn
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional

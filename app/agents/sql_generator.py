@@ -1,7 +1,9 @@
 # app/agents/sql_generator.py
-from app.audit.langsmith_tracing import traceable_fn
+
 from __future__ import annotations
 
+
+from app.audit.langsmith_tracing import traceable_fn
 import logging
 import re
 import json

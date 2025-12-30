@@ -1,7 +1,9 @@
 # Core
 python-dotenv==1.0.1
 pydantic==2.10.4
-requests==2.32.5
+# requests==2.32.5
+streamlit==1.41.1
+requests==2.32.3
 
 # DuckDB + data
 duckdb==1.1.3
@@ -24,3 +26,6 @@ langchain-google-genai==2.0.9
 # Vector store for schema RAG
 chromadb==0.5.23
 sentence-transformers==5.2.0
+
+fastapi==0.115.6
+uvicorn==0.32.1
