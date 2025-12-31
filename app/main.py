@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 from dotenv import load_dotenv
-
+import os, sys
+sys.path.insert(0, os.getcwd())
 from app.graph.text2sql_graph import run_text2sql
 
 

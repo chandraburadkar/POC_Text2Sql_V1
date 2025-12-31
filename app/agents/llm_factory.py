@@ -121,7 +121,7 @@ def _get_gemini_llm(temperature: float = 0.0) -> BaseChatModel:
 
     # Use a model that is available in your `client.models.list()` output
     # You listed: models/gemini-2.5-flash, models/gemini-2.0-flash-001, etc.
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-001")
 
     # langchain-google-genai expects model names without "models/" prefix.
     # You must pass "gemini-2.0-flash-001" not "models/gemini-2.0-flash-001".
@@ -151,6 +151,34 @@ def _get_ollama_llm(temperature: float = 0.0) -> BaseChatModel:
 
 
 # ============================================================
+# OpenAI Chat Model Factory
+# ============================================================
+def _get_openai_llm(temperature: float = 0.0) -> BaseChatModel:
+    """
+    Returns OpenAI chat model using langchain-openai.
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception as e:
+        raise ImportError(
+            "langchain-openai is not installed or incompatible. "
+            "Install it with: pip install langchain-openai"
+        ) from e
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in environment. Set it in .env or export it.")
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
+
+    llm = ChatOpenAI(
+        model_name=model,
+        temperature=temperature,
+        openai_api_key=api_key,
+    )
+    return llm
+
+# ============================================================
 # Public function used by agents
 # ============================================================
 def get_llm(temperature: float = 0.0) -> BaseChatModel:
@@ -168,6 +196,9 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
     if provider == "gemini":
         logger.info("Using Gemini LLM provider")
         return _get_gemini_llm(temperature=temperature)
-
+    elif provider == "openai":
+        logger.info("Using OpenAI LLM provider")
+        return _get_openai_llm(temperature=temperature)
+    
     logger.info("Using Ollama LLM provider")
     return _get_ollama_llm(temperature=temperature)
