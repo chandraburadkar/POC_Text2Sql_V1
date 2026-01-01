@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import requests
 import streamlit as st
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 
 # -----------------------------
@@ -15,122 +15,13 @@ TEXT2SQL_ENDPOINT = "/api/text2sql"
 
 
 # -----------------------------
-# PAGE SETUP (MUST BE FIRST)
+# PAGE SETUP
 # -----------------------------
 st.set_page_config(
     page_title="GARV Text2SQL",
     page_icon="✈️",
     layout="wide",
     initial_sidebar_state="expanded",
-)
-
-
-# -----------------------------
-# GLOBAL CSS (DO NOT MOVE)
-# -----------------------------
-st.markdown(
-    """
-<style>
-/* Remove Streamlit padding */
-.block-container {
-    padding-top: 0 !important;
-    max-width: 1300px;
-}
-
-/* Hide Streamlit default header */
-header[data-testid="stHeader"] {
-    display: none;
-}
-
-/* ===== TOP HEADER ===== */
-.top-header {
-    position: sticky;
-    top: 0;
-    z-index: 9999;
-    background: #0e1117;
-    border-bottom: 1px solid #2a2e36;
-    padding: 12px 24px;
-}
-
-.top-header-inner {
-    max-width: 1300px;
-    margin: auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-/* Branding */
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
-.logo {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 900;
-    font-size: 14px;
-    border: 1px solid #2a2e36;
-}
-
-.logo.client { background: #1f2937; }
-.logo.garv { background: #0ea5e9; color: black; }
-
-.brand-text {
-    display: flex;
-    flex-direction: column;
-}
-
-.brand-title {
-    font-size: 18px;
-    font-weight: 800;
-}
-
-.brand-sub {
-    font-size: 12px;
-    color: #9ca3af;
-}
-
-/* Status pills */
-.status-bar {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.pill {
-    border: 1px solid #2a2e36;
-    padding: 6px 12px;
-    border-radius: 999px;
-    font-size: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-}
-.dot.green { background: #22c55e; }
-.dot.red { background: #ef4444; }
-
-/* Chat container */
-.chat-container {
-    max-width: 900px;
-    margin: auto;
-    padding-top: 16px;
-}
-</style>
-""",
-    unsafe_allow_html=True,
 )
 
 
@@ -146,46 +37,14 @@ def is_api_alive() -> bool:
 
 
 # -----------------------------
-# HEADER (SAFE HTML)
-# -----------------------------
-connected = is_api_alive()
-
-# st.markdown(
-#     f"""
-# <div class="top-header">
-#   <div class="top-header-inner">
-#     <div class="brand">
-#       <div class="logo client">CL</div>
-#       <div class="logo garv">GARV</div>
-#       <div class="brand-text">
-#         <div class="brand-title">GARV Text2SQL</div>
-#         <div class="brand-sub">Enterprise conversational SQL for airport operations</div>
-#       </div>
-#     </div>
-
-#     # <div class="status-bar">
-#     #   <div class="pill">
-#     #     <span class="dot {'green' if connected else 'red'}"></span>
-#     #     {'Connected' if connected else 'Offline'}
-#     #   </div>
-#     #   <div class="pill">DuckDB</div>
-#     #   <div class="pill">Ollama · qwen2.5:7b</div>
-#     #   <div class="pill">API 127.0.0.1:8000</div>
-#     # </div>
-#   </div>
-# </div>
-# """,
-#     unsafe_allow_html=True,
-# )
-
-
-# -----------------------------
 # SESSION STATE
 # -----------------------------
 if "chats" not in st.session_state:
     st.session_state.chats = []
 if "active_chat" not in st.session_state:
     st.session_state.active_chat = None
+if "persona" not in st.session_state:
+    st.session_state.persona = "analyst"
 
 
 def new_chat():
@@ -222,6 +81,13 @@ def get_chat():
 with st.sidebar:
     st.title("GARV Text2SQL")
 
+    st.session_state.persona = st.selectbox(
+        "Persona",
+        options=["executive", "ops_manager", "analyst"],
+        index=["executive", "ops_manager", "analyst"].index(st.session_state.persona),
+        help="Controls RBAC, depth of analysis, and visualization"
+    )
+
     if st.button("+ New chat", use_container_width=True):
         new_chat()
 
@@ -231,21 +97,25 @@ with st.sidebar:
         if st.button(c["title"], use_container_width=True):
             st.session_state.active_chat = c["id"]
 
-    st.caption("Keep FastAPI running on 127.0.0.1:8000")
+    st.divider()
+
+    st.caption(
+        f"API: {'🟢 Connected' if is_api_alive() else '🔴 Offline'}"
+    )
 
 
 # -----------------------------
 # CHAT UI
 # -----------------------------
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-
 chat = get_chat()
 
 for m in chat["messages"]:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-prompt = st.chat_input("Ask a question… e.g. Top 5 airports by avg security wait time last 7 days")
+prompt = st.chat_input(
+    "Ask a question… e.g. Top 5 airports by avg security wait time last 7 days"
+)
 
 if prompt:
     if chat["title"] == "New chat":
@@ -260,24 +130,40 @@ if prompt:
             try:
                 r = requests.post(
                     API_BASE + TEXT2SQL_ENDPOINT,
-                    json={"question": prompt},
+                    json={
+                        "question": prompt,
+                        "persona": st.session_state.persona,
+                    },
                     timeout=120,
                 )
-                out = r.json()
 
-                if out.get("ok"):
-                    answer = (
-                        f"{out['explanation']['summary']}\n\n"
-                        f"**SQL**\n```sql\n{out['final_sql']}\n```\n\n"
-                        f"**Preview**\n{out['preview_markdown']}"
-                    )
+                if r.status_code != 200:
+                    raise RuntimeError(r.text)
+
+                out: Dict[str, Any] = r.json()
+
+                if not out.get("ok"):
+                    answer = f"❌ {out.get('message', 'Unknown error')}"
                 else:
-                    answer = f"❌ Error: {out.get('message')}"
+                    explanation = out.get("explanation")
+                    if isinstance(explanation, dict):
+                        explanation_text = explanation.get("summary") or json.dumps(
+                            explanation, indent=2
+                        )
+                    else:
+                        explanation_text = explanation or ""
 
+                    answer = f"""
+                            {explanation_text}
+
+                            **SQL**
+                            ```sql
+                            {out.get("final_sql", "")}
+                            Preview
+                            {out.get("preview_markdown", "No preview available")}
+                            """
             except Exception as e:
                 answer = f"❌ API error: {e}"
 
-        st.markdown(answer)
-        chat["messages"].append({"role": "assistant", "content": answer})
-
-st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(answer)
+            chat["messages"].append({"role": "assistant", "content": answer})

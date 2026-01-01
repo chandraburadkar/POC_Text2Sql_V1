@@ -10,6 +10,12 @@ from app.agents.sql_generator import generate_sql
 from app.agents.sql_validator import validate_and_autofix_sql
 from app.agents.sql_executor import execute_sql
 from app.agents.explainer import explain_answer
+from mcp.genie_mcp import GenieMCP
+from mcp.cache_mcp import CacheMCP
+from security.rbac import check_table_access
+
+genie_mcp = GenieMCP(enabled=False)   # 🔒 Enable ONLY on DBX
+cache_mcp = CacheMCP()
 
 
 def _safe_get_sql(candidate_sql: Any) -> str:
@@ -28,20 +34,19 @@ def _safe_get_sql(candidate_sql: Any) -> str:
 @traceable_fn("run_text2sql")
 def run_text2sql(
     user_question: str,
+    persona: str = "analyst",  # ✅ NEW
     top_k_schema: int = 5,
     return_rows: int = 20,
-    enable_viz: bool = False,  # reserved for future
+    enable_viz: bool = False,
 ) -> Dict[str, Any]:
-    """
-    End-to-end Text2SQL pipeline.
-    Safe for terminal + Jupyter.
-    """
+
     with tracing_session():
 
         # -----------------------------
         # Init shared state
         # -----------------------------
         state = AgentState(user_question=user_question)
+        state.persona = persona
 
         # -----------------------------
         # STEP 5: Query Rewriter
@@ -59,7 +64,7 @@ def run_text2sql(
 
         state.schema_context = "\n\n".join(d.page_content for d in docs)
 
-        tables: List[str] = []
+        tables: list[str] = []
         for d in docs:
             t = None
             if getattr(d, "metadata", None):
@@ -72,6 +77,48 @@ def run_text2sql(
                 tables.append(t)
 
         state.retrieved_tables = list(dict.fromkeys(tables))
+
+        # -----------------------------
+        # 🔐 RBAC CHECK
+        # -----------------------------
+        if not check_table_access(state.persona, state.retrieved_tables):
+            return {
+                "ok": False,
+                "stage": "rbac",
+                "message": f"Persona '{persona}' not allowed to access tables",
+                "retrieved_tables": state.retrieved_tables,
+            }
+
+        # -----------------------------
+        # ⚡ CACHE CHECK
+        # -----------------------------
+        cached = cache_mcp.get(state.rewritten_query)
+        if cached:
+            return {**cached, "cached": True}
+
+        # -----------------------------
+        # 🧠 GENIE FAST PATH
+        # -----------------------------
+        if genie_mcp.enabled and genie_mcp.can_handle(state.intent):
+            try:
+                genie_out = genie_mcp.execute(state.rewritten_query)
+
+                payload = {
+                    "ok": True,
+                    "intent": state.intent,
+                    "entities": state.entities,
+                    "rewritten_query": state.rewritten_query,
+                    "retrieved_tables": state.retrieved_tables,
+                    "final_sql": genie_out.get("sql"),
+                    "result_df": genie_out.get("df"),
+                    "explanation": "Generated via Genie",
+                    "chart_path": None,
+                }
+                cache_mcp.set(state.rewritten_query, payload)
+                return payload
+
+            except Exception:
+                pass  # 🔁 SAFE FALLBACK
 
         # -----------------------------
         # STEP 6: SQL Generator
@@ -96,11 +143,10 @@ def run_text2sql(
                 "rewritten_query": state.rewritten_query,
                 "retrieved_tables": state.retrieved_tables,
                 "candidate_sql": cand,
-                "debug": {"rewriter": rew},
             }
 
         # -----------------------------
-        # STEP 7: SQL Validator + Auto-fix
+        # STEP 7: SQL Validator
         # -----------------------------
         val = validate_and_autofix_sql(
             rewritten_query=state.rewritten_query,
@@ -117,15 +163,7 @@ def run_text2sql(
             return {
                 "ok": False,
                 "stage": "sql_validation",
-                "message": "SQL validation failed.",
-                "intent": state.intent,
-                "entities": state.entities,
-                "rewritten_query": state.rewritten_query,
-                "retrieved_tables": state.retrieved_tables,
-                "candidate_sql": cand,
                 "final_sql": state.final_sql,
-                "fixed_by_llm": state.fixed_by_llm,
-                "debug": {"rewriter": rew, "validator": val},
             }
 
         # -----------------------------
@@ -146,9 +184,9 @@ def run_text2sql(
         state.explanation = explanation
 
         # -----------------------------
-        # STEP 10: Final Response
+        # STEP 10: Final Response + Cache
         # -----------------------------
-        return {
+        response = {
             "ok": True,
             "intent": state.intent,
             "entities": state.entities,
@@ -157,21 +195,12 @@ def run_text2sql(
             "candidate_sql": state.candidate_sql,
             "final_sql": state.final_sql,
             "fixed_by_llm": state.fixed_by_llm,
-
-            # Execution outputs
             "dataframe": state.dataframe,
             "result_df": state.result_df,
-            "preview_markdown": (state.dataframe or {}).get("preview_markdown"),
-
-            # Explanation
+            "preview_markdown": exec_out.get("preview_markdown"),
             "explanation": state.explanation,
-
-            # Visualization placeholder
             "chart_path": None,
-
-            # Debug
-            "debug": {
-                "rewriter": rew,
-                "validator": val,
-            },
         }
+
+        cache_mcp.set(state.rewritten_query, response)
+        return response

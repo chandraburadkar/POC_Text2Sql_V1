@@ -4,16 +4,21 @@ import argparse
 import json
 from dotenv import load_dotenv
 import os, sys
+
 sys.path.insert(0, os.getcwd())
+
 from app.graph.text2sql_graph import run_text2sql
 
 
-def run_cli(question: str) -> None:
-    out = run_text2sql(question)
+def run_cli(question: str, persona: str) -> None:
+    out = run_text2sql(question, persona=persona)
+
     print("\n=== FINAL SQL ===")
     print(out.get("final_sql"))
+
     print("\n=== PREVIEW ===")
     print(out.get("preview_markdown"))
+
     print("\n=== EXPLANATION ===")
     print(json.dumps(out.get("explanation"), indent=2, default=str))
 
@@ -22,9 +27,11 @@ def build_api():
     from fastapi import FastAPI
     from app.api.routes import router
 
-    api = FastAPI(title="GARV Text2SQL API", version="0.1")
+    api = FastAPI(
+        title="GARV Text2SQL API",
+        version="0.1",
+    )
 
-    # simple root so hitting http://127.0.0.1:8000 doesn't show Not Found
     @api.get("/")
     def root():
         return {
@@ -46,8 +53,13 @@ def run_api(host: str = "127.0.0.1", port: int = 8000) -> None:
 
     api = build_api()
 
-    # IMPORTANT: do not enable reload here unless you run uvicorn with import string
-    uvicorn.run(api, host=host, port=port, log_level="info")
+    # DO NOT enable reload here
+    uvicorn.run(
+        api,
+        host=host,
+        port=port,
+        log_level="info",
+    )
 
 
 def main():
@@ -55,6 +67,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("question", nargs="?", default=None)
+    parser.add_argument("--persona", default="analyst")
     parser.add_argument("--api", action="store_true", help="Run FastAPI server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -72,7 +85,7 @@ def main():
         print("  python -m app.main --api --host 127.0.0.1 --port 8000")
         return
 
-    run_cli(args.question)
+    run_cli(args.question, args.persona)
 
 
 if __name__ == "__main__":
